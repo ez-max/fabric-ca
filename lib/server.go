@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package lib
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -25,14 +26,19 @@ import (
 	"github.com/cloudflare/cfssl/log"
 	"github.com/cloudflare/cfssl/revoke"
 	"github.com/cloudflare/cfssl/signer"
+	"github.com/felixge/httpsnoop"
 	gmux "github.com/gorilla/mux"
 	"github.com/hyperledger/fabric-ca/lib/attr"
 	"github.com/hyperledger/fabric-ca/lib/caerrors"
 	calog "github.com/hyperledger/fabric-ca/lib/common/log"
-	"github.com/hyperledger/fabric-ca/lib/dbutil"
 	"github.com/hyperledger/fabric-ca/lib/metadata"
+	dbutil "github.com/hyperledger/fabric-ca/lib/server/db/util"
+	cametrics "github.com/hyperledger/fabric-ca/lib/server/metrics"
+	"github.com/hyperledger/fabric-ca/lib/server/operations"
 	stls "github.com/hyperledger/fabric-ca/lib/tls"
 	"github.com/hyperledger/fabric-ca/util"
+	"github.com/hyperledger/fabric-lib-go/healthz"
+	"github.com/hyperledger/fabric/common/metrics"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 )
@@ -44,6 +50,17 @@ const (
 	apiPathPrefix             = "/api/v1/"
 )
 
+//go:generate counterfeiter -o mocks/operations_server.go -fake-name OperationsServer . operationsServer
+
+// operationsServer defines the contract required for an operations server
+type operationsServer interface {
+	metrics.Provider
+	Start() error
+	Stop() error
+	Addr() string
+	RegisterChecker(component string, checker healthz.HealthChecker) error
+}
+
 // Server is the fabric-ca server
 type Server struct {
 	// The home directory for the server
@@ -53,6 +70,10 @@ type Server struct {
 	BlockingStart bool
 	// The server's configuration
 	Config *ServerConfig
+	// Metrics are the metrics that the server tracks
+	Metrics cametrics.Metrics
+	// Operations is responsible for the server's operation information
+	Operations operationsServer
 	// The server mux
 	mux *gmux.Router
 	// The current listener for this server
@@ -85,6 +106,9 @@ func (s *Server) Init(renew bool) (err error) {
 
 // init initializses the server leaving the DB open
 func (s *Server) init(renew bool) (err error) {
+	s.Config.Operations.Metrics = s.Config.Metrics
+	s.Operations = operations.NewSystem(s.Config.Operations)
+
 	serverVersion := metadata.GetVersion()
 	err = calog.SetLogLevel(s.Config.LogLevel, s.Config.Debug)
 	if err != nil {
@@ -97,6 +121,7 @@ func (s *Server) init(renew bool) (err error) {
 	}
 	log.Infof("Server Levels: %+v", s.levels)
 
+	s.mux = gmux.NewRouter()
 	// Initialize the config
 	err = s.initConfig()
 	if err != nil {
@@ -108,6 +133,21 @@ func (s *Server) init(renew bool) (err error) {
 		return err
 	}
 	// Successful initialization
+	return nil
+}
+
+func (s *Server) initMetrics() {
+	metricsProvider := s.Operations
+	s.Metrics.APICounter = metricsProvider.NewCounter(cametrics.APICounterOpts)
+	s.Metrics.APIDuration = metricsProvider.NewHistogram(cametrics.APIDurationOpts)
+}
+
+func (s *Server) startOperationsServer() error {
+	err := s.Operations.Start()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -136,6 +176,18 @@ func (s *Server) Start() (err error) {
 
 	log.Debugf("%d CA instance(s) running on server", len(s.caMap))
 
+	// Start operations server
+	err = s.startOperationsServer()
+	if err != nil {
+		return err
+	}
+
+	err = s.Operations.RegisterChecker("server", s)
+	if err != nil {
+		return nil
+	}
+	s.initMetrics()
+
 	// Start listening and serving
 	err = s.listenAndServe()
 	if err != nil {
@@ -145,6 +197,7 @@ func (s *Server) Start() (err error) {
 		}
 		return err
 	}
+
 	return nil
 }
 
@@ -153,34 +206,48 @@ func (s *Server) Start() (err error) {
 // requests in transit to fail, and so is only used for testing.
 // A graceful shutdown will be supported with golang 1.8.
 func (s *Server) Stop() error {
-	err := s.closeListener()
+	// Stop operations server
+	err := s.Operations.Stop()
+	if err != nil {
+		return err
+	}
+
+	if s.listener == nil {
+		return nil
+	}
+
+	_, port, err := net.SplitHostPort(s.listener.Addr().String())
+	if err != nil {
+		return err
+	}
+
+	err = s.closeListener()
 	if err != nil {
 		return err
 	}
 	if s.wait == nil {
 		return nil
 	}
-	// Wait for message on wait channel from the http.serve thread. If message
-	// is not received in 10 seconds, return
-	port := s.Config.Port
+
 	for i := 0; i < 10; i++ {
 		select {
 		case <-s.wait:
-			log.Debugf("Stop: successful stop on port %d", port)
+			log.Debugf("Stop: successful stop on port %s", port)
 			close(s.wait)
 			s.wait = nil
 			return nil
 		default:
-			log.Debugf("Stop: waiting for listener on port %d to stop", port)
+			log.Debugf("Stop: waiting for listener on port %s to stop", port)
 			time.Sleep(time.Second)
 		}
 	}
-	log.Debugf("Stop: timed out waiting for stop notification for port %d", port)
+	log.Debugf("Stop: timed out waiting for stop notification for port %s", port)
 	// make sure DB is closed
 	err = s.closeDB()
 	if err != nil {
 		log.Errorf("Close DB failed: %s", err)
 	}
+
 	return nil
 }
 
@@ -463,27 +530,54 @@ func (s *Server) GetCA(name string) (*CA, error) {
 
 // Register all endpoint handlers
 func (s *Server) registerHandlers() {
-	s.mux = gmux.NewRouter()
-	s.registerHandler("cainfo", newCAInfoEndpoint(s))
-	s.registerHandler("register", newRegisterEndpoint(s))
-	s.registerHandler("enroll", newEnrollEndpoint(s))
-	s.registerHandler("idemix/credential", newIdemixEnrollEndpoint(s))
-	s.registerHandler("idemix/cri", newIdemixCRIEndpoint(s))
-	s.registerHandler("reenroll", newReenrollEndpoint(s))
-	s.registerHandler("revoke", newRevokeEndpoint(s))
-	s.registerHandler("tcert", newTCertEndpoint(s))
-	s.registerHandler("gencrl", newGenCRLEndpoint(s))
-	s.registerHandler("identities", newIdentitiesStreamingEndpoint(s))
-	s.registerHandler("identities/{id}", newIdentitiesEndpoint(s))
-	s.registerHandler("affiliations", newAffiliationsStreamingEndpoint(s))
-	s.registerHandler("affiliations/{affiliation}", newAffiliationsEndpoint(s))
-	s.registerHandler("certificates", newCertificateEndpoint(s))
+	s.mux.Use(s.middleware)
+	s.registerHandler(newCAInfoEndpoint(s))
+	s.registerHandler(newRegisterEndpoint(s))
+	s.registerHandler(newEnrollEndpoint(s))
+	s.registerHandler(newIdemixEnrollEndpoint(s))
+	s.registerHandler(newIdemixCRIEndpoint(s))
+	s.registerHandler(newReenrollEndpoint(s))
+	s.registerHandler(newRevokeEndpoint(s))
+	s.registerHandler(newTCertEndpoint(s))
+	s.registerHandler(newGenCRLEndpoint(s))
+	s.registerHandler(newIdentitiesStreamingEndpoint(s))
+	s.registerHandler(newIdentitiesEndpoint(s))
+	s.registerHandler(newAffiliationsStreamingEndpoint(s))
+	s.registerHandler(newAffiliationsEndpoint(s))
+	s.registerHandler(newCertificateEndpoint(s))
 }
 
 // Register a handler
-func (s *Server) registerHandler(path string, se *serverEndpoint) {
-	s.mux.Handle("/"+path, se)
-	s.mux.Handle(apiPathPrefix+path, se)
+func (s *Server) registerHandler(se *serverEndpoint) {
+	s.mux.Handle("/"+se.Path, se).Name(se.Path)
+	s.mux.Handle(apiPathPrefix+se.Path, se).Name(se.Path)
+}
+
+func (s *Server) middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		metrics := httpsnoop.CaptureMetrics(next, w, r)
+		apiName := s.getAPIName(r)
+		caName := s.getCAName()
+		s.recordMetrics(metrics.Duration, caName, apiName, strconv.Itoa(metrics.Code))
+	})
+}
+
+func (s *Server) getAPIName(r *http.Request) string {
+	var apiName string
+	var match gmux.RouteMatch
+	if s.mux.Match(r, &match) {
+		apiName = match.Route.GetName()
+	}
+	return apiName
+}
+
+func (s *Server) getCAName() string {
+	return s.CA.Config.CA.Name
+}
+
+func (s *Server) recordMetrics(duration time.Duration, caName, apiName, statusCode string) {
+	s.Metrics.APICounter.With("ca_name", caName, "api_name", apiName, "status_code", statusCode).Add(1)
+	s.Metrics.APIDuration.With("ca_name", caName, "api_name", apiName, "status_code", statusCode).Observe(duration.Seconds())
 }
 
 // Starting listening and serving
@@ -604,6 +698,7 @@ func (s *Server) serve() error {
 		// in https://jira.hyperledger.org/browse/FAB-3100.
 		return nil
 	}
+
 	s.serveError = http.Serve(listener, s.mux)
 	log.Errorf("Server has stopped serving: %s", s.serveError)
 	s.closeListener()
@@ -615,6 +710,11 @@ func (s *Server) serve() error {
 		s.wait <- true
 	}
 	return s.serveError
+}
+
+// HealthCheck pings the database to determine if it is reachable
+func (s *Server) HealthCheck(ctx context.Context) error {
+	return s.db.PingContext(ctx)
 }
 
 // checkAndEnableProfiling checks for FABRIC_CA_SERVER_PROFILE_PORT env variable
@@ -659,19 +759,27 @@ func (s *Server) makeFileNamesAbsolute() error {
 func (s *Server) closeListener() error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	port := s.Config.Port
+
 	if s.listener == nil {
-		msg := fmt.Sprintf("Stop: listener was already closed on port %d", port)
+		msg := fmt.Sprintf("Stop: listener was already closed")
 		log.Debugf(msg)
 		return errors.New(msg)
 	}
-	err := s.listener.Close()
-	s.listener = nil
+
+	_, port, err := net.SplitHostPort(s.listener.Addr().String())
 	if err != nil {
-		log.Debugf("Stop: failed to close listener on port %d: %s", port, err)
 		return err
 	}
-	log.Debugf("Stop: successfully closed listener on port %d", port)
+
+	err = s.listener.Close()
+	if err != nil {
+		log.Debugf("Stop: failed to close listener on port %s: %s", port, err)
+		return err
+	}
+
+	log.Debugf("Stop: successfully closed listener on port %s", port)
+	s.listener = nil
+
 	return nil
 }
 
@@ -768,6 +876,12 @@ func (s *Server) autoGenerateTLSCertificateKey() error {
 	c := s.Config
 	log.Debugf("Generated TLS Certificate: %s", c.TLS.CertFile)
 
+	return nil
+}
+
+// Log is a function required to meet the interface required by statsd
+func (s *Server) Log(keyvals ...interface{}) error {
+	log.Warning(keyvals...)
 	return nil
 }
 

@@ -448,3 +448,56 @@ Fabric-CA Server's Configuration File
     cfg:
       identities:
         passwordattempts: 10
+    
+    ###############################################################################
+    #
+    #    Operations section
+    #
+    ###############################################################################
+    operations:
+        # host and port for the operations server
+        listenAddress: 127.0.0.1:9443
+    
+        # TLS configuration for the operations endpoint
+        tls:
+            # TLS enabled
+            enabled: false
+    
+            # path to PEM encoded server certificate for the operations server
+            cert:
+                file:
+    
+            # path to PEM encoded server key for the operations server
+            key:
+                file:
+    
+            # require client certificate authentication to access all resources
+            clientAuthRequired: false
+    
+            # paths to PEM encoded ca certificates to trust for client authentication
+            clientRootCAs:
+                files: []
+    
+    ###############################################################################
+    #
+    #    Metrics section
+    #
+    ###############################################################################
+    metrics:
+        # statsd, prometheus, or disabled
+        provider: disabled
+    
+        # statsd configuration
+        statsd:
+            # network type: tcp or udp
+            network: udp
+    
+            # statsd server address
+            address: 127.0.0.1:8125
+    
+            # the interval at which locally cached counters and gauges are pushsed
+            # to statsd; timings are pushed immediately
+            writeInterval: 10s
+    
+            # prefix is prepended to all emitted statsd merics
+            prefix: server

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/cloudflare/cfssl/log"
-	"github.com/hyperledger/fabric-ca/lib/dbutil"
+	"github.com/hyperledger/fabric-ca/lib/server/db"
 	"github.com/kisielk/sqlstruct"
 	"github.com/pkg/errors"
 )
@@ -63,10 +63,12 @@ type CredRecord struct {
 	Level            int       `db:"level"`
 }
 
+//go:generate mockery -name CredDBAccessor -case underscore
+
 // CredDBAccessor is the accessor for credentials database table
 type CredDBAccessor interface {
 	// Sets reference to datastore object
-	SetDB(db dbutil.FabricCADB)
+	SetDB(db db.FabricCADB)
 	// InsertCredential inserts specified Idemix credential record into database
 	InsertCredential(cr CredRecord) error
 	// GetCredential returns Idemix credential associated with the specified revocation
@@ -82,11 +84,11 @@ type CredDBAccessor interface {
 // CredentialAccessor implements IdemixCredDBAccessor interface
 type CredentialAccessor struct {
 	level int
-	db    dbutil.FabricCADB
+	db    db.FabricCADB
 }
 
 // NewCredentialAccessor returns a new CredentialAccessor.
-func NewCredentialAccessor(db dbutil.FabricCADB, level int) CredDBAccessor {
+func NewCredentialAccessor(db db.FabricCADB, level int) CredDBAccessor {
 	ac := new(CredentialAccessor)
 	ac.db = db
 	ac.level = level
@@ -94,7 +96,7 @@ func NewCredentialAccessor(db dbutil.FabricCADB, level int) CredDBAccessor {
 }
 
 // SetDB changes the underlying sql.DB object Accessor is manipulating.
-func (ac *CredentialAccessor) SetDB(db dbutil.FabricCADB) {
+func (ac *CredentialAccessor) SetDB(db db.FabricCADB) {
 	ac.db = db
 }
 
@@ -106,7 +108,7 @@ func (ac *CredentialAccessor) InsertCredential(cr CredRecord) error {
 		return err
 	}
 	cr.Level = ac.level
-	res, err := ac.db.NamedExec(InsertCredentialSQL, cr)
+	res, err := ac.db.NamedExec("InsertCredential", InsertCredentialSQL, cr)
 	if err != nil {
 		return errors.Wrap(err, "Failed to insert credential into datastore")
 	}
@@ -133,7 +135,7 @@ func (ac *CredentialAccessor) GetCredentialsByID(id string) ([]CredRecord, error
 		return nil, err
 	}
 	crs := []CredRecord{}
-	err = ac.db.Select(&crs, fmt.Sprintf(ac.db.Rebind(SelectCredentialByIDSQL), sqlstruct.Columns(CredRecord{})), id)
+	err = ac.db.Select("GetCredentialsByID", &crs, fmt.Sprintf(ac.db.Rebind(SelectCredentialByIDSQL), sqlstruct.Columns(CredRecord{})), id)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to get credentials for identity '%s' from datastore", id)
 	}
@@ -149,7 +151,7 @@ func (ac *CredentialAccessor) GetCredential(revocationHandle string) (*CredRecor
 		return nil, err
 	}
 	cr := &CredRecord{}
-	err = ac.db.Select(cr, fmt.Sprintf(ac.db.Rebind(SelectCredentialSQL), sqlstruct.Columns(CredRecord{})), revocationHandle)
+	err = ac.db.Select("GetCredential", cr, fmt.Sprintf(ac.db.Rebind(SelectCredentialSQL), sqlstruct.Columns(CredRecord{})), revocationHandle)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to get credential associated with revocation handle '%s' from datastore", revocationHandle)
 	}
@@ -164,7 +166,7 @@ func (ac *CredentialAccessor) GetRevokedCredentials() ([]CredRecord, error) {
 		return nil, err
 	}
 	crs := []CredRecord{}
-	err = ac.db.Select(&crs, fmt.Sprintf(ac.db.Rebind(SelectRevokedCredentialSQL), sqlstruct.Columns(CredRecord{})))
+	err = ac.db.Select("GetRevokedCredentials", &crs, fmt.Sprintf(ac.db.Rebind(SelectRevokedCredentialSQL), sqlstruct.Columns(CredRecord{})))
 	if err != nil {
 		return crs, errors.Wrap(err, "Failed to get revoked credentials from datastore")
 	}
