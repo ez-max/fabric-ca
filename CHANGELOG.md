@@ -1,3 +1,38 @@
+## v1.4.2
+Wed Jul 17 14:55:08 EDT 2019
+
+* [396c093](https://github.com/hyperledger/fabric-ca/commit/396c093) FABC-848 Fix TLS issue with PostgreSQL
+* [f88e912](https://github.com/hyperledger/fabric-ca/commit/f88e912) [FABC-853] Adding metrics table LabelHelp support
+* [5bf5d47](https://github.com/hyperledger/fabric-ca/commit/5bf5d47) [FABC-853] import fabric/gendoc for fabric-ca
+* [477f5a2](https://github.com/hyperledger/fabric-ca/commit/477f5a2) FABC-837 Make metrics compatible with multi-root CA
+* [4289522](https://github.com/hyperledger/fabric-ca/commit/4289522) Update fabric/bccsp and miekg/pkcs11 to latest revs
+* [8b56ee8](https://github.com/hyperledger/fabric-ca/commit/8b56ee8) [FABC-850] Fix Fabric CA doc wrt OU types
+* [f32e113](https://github.com/hyperledger/fabric-ca/commit/f32e113) FAB-15465: Update Jinja2
+* [839c46e](https://github.com/hyperledger/fabric-ca/commit/839c46e) [FABC-842] Fabric CA Foc Fix
+* [3004074](https://github.com/hyperledger/fabric-ca/commit/3004074) FABC-839 Update ca mutiarch publish script
+* [3f449b5](https://github.com/hyperledger/fabric-ca/commit/3f449b5) [FAB-14969](https://jira.hyperledger.org/browse/FAB-14969) Prepare for next fabric-ca rel (1.4.2)
+
+## v1.4.1
+Thu Apr 11 11:08:16 EDT 2019
+
+* [a32dd3c](https://github.com/hyperledger/fabric-ca/commit/a32dd3c) FABC-408 Add CORS support
+* [7de4c77](https://github.com/hyperledger/fabric-ca/commit/7de4c77) FABC-833 Update Jenkinsfile
+* [55f5eb7](https://github.com/hyperledger/fabric-ca/commit/55f5eb7) Fix --csr.hosts flag for client and server
+* [19441cc](https://github.com/hyperledger/fabric-ca/commit/19441cc) FAB-14775 Update fabric-ca to baseimage 0.4.15
+* [edb6e08](https://github.com/hyperledger/fabric-ca/commit/edb6e08) FABCI-311 Add ci pipeline script
+* [aaee55f](https://github.com/hyperledger/fabric-ca/commit/aaee55f) [FABC-805] Wire DB metrics
+* [197b881](https://github.com/hyperledger/fabric-ca/commit/197b881) [FABC-804] Create DB Metric Options
+* [ea1ebbe](https://github.com/hyperledger/fabric-ca/commit/ea1ebbe) [FABC-803] Refactoring DB code
+* [3c36ab5](https://github.com/hyperledger/fabric-ca/commit/3c36ab5) [FABC-795] Create a CA Server Health Check
+* [8c245c1](https://github.com/hyperledger/fabric-ca/commit/8c245c1) [FABC-790] Create an operations server
+* [8d9b622](https://github.com/hyperledger/fabric-ca/commit/8d9b622) [FABC-787] Wire in metrics for server APIs
+* [08b1153](https://github.com/hyperledger/fabric-ca/commit/08b1153) [FABC-786] Vendor go-kit
+* [81fa829](https://github.com/hyperledger/fabric-ca/commit/81fa829) [FABC-785] Add metrics for server APIs
+* [ec59334](https://github.com/hyperledger/fabric-ca/commit/ec59334) [FABC-783] Add middleware to HTTP router
+* [edb65ba](https://github.com/hyperledger/fabric-ca/commit/edb65ba) [FAB-14174](https://jira.hyperledger.org/browse/FAB-14174) Update GOVER to 1.11.5 in CA
+* [3dafa32](https://github.com/hyperledger/fabric-ca/commit/3dafa32) Remove tcert from swagger
+* [d3ef594](https://github.com/hyperledger/fabric-ca/commit/d3ef594) [FAB-13558](https://jira.hyperledger.org/browse/FAB-13558) Prepare fabric-ca for next rel (v1.4.1)
+
 ## v1.4.0
 Tue Jan  8 12:21:52 EST 2019
 

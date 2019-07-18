@@ -29,9 +29,9 @@
 #   - clean-all - cleans the build area and release packages
 
 PROJECT_NAME = fabric-ca
-BASE_VERSION = 1.4.1
-PREV_VERSION = 1.4.0
-IS_RELEASE = false
+BASE_VERSION = 1.4.2
+PREV_VERSION = 1.4.1
+IS_RELEASE = true
 
 ARCH=$(shell go env GOARCH)
 MARCH=$(shell go env GOOS)-$(shell go env GOARCH)
@@ -303,3 +303,7 @@ dist-clean:
 	-@rm -rf release/linux-s390x/hyperledger-fabric-ca-linux-s390x.$(PROJECT_VERSION).tar.gz ||:
 
 .FORCE:
+
+generate-metrics-doc:
+	@echo "Generating metrics reference documentation..."
+	@./scripts/metrics_doc.sh

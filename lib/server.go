@@ -27,13 +27,15 @@ import (
 	"github.com/cloudflare/cfssl/revoke"
 	"github.com/cloudflare/cfssl/signer"
 	"github.com/felixge/httpsnoop"
+	ghandlers "github.com/gorilla/handlers"
 	gmux "github.com/gorilla/mux"
 	"github.com/hyperledger/fabric-ca/lib/attr"
 	"github.com/hyperledger/fabric-ca/lib/caerrors"
 	calog "github.com/hyperledger/fabric-ca/lib/common/log"
 	"github.com/hyperledger/fabric-ca/lib/metadata"
+	"github.com/hyperledger/fabric-ca/lib/server/db"
 	dbutil "github.com/hyperledger/fabric-ca/lib/server/db/util"
-	cametrics "github.com/hyperledger/fabric-ca/lib/server/metrics"
+	servermetrics "github.com/hyperledger/fabric-ca/lib/server/metrics"
 	"github.com/hyperledger/fabric-ca/lib/server/operations"
 	stls "github.com/hyperledger/fabric-ca/lib/tls"
 	"github.com/hyperledger/fabric-ca/util"
@@ -63,35 +65,35 @@ type operationsServer interface {
 
 // Server is the fabric-ca server
 type Server struct {
-	// The home directory for the server
+	// The home directory for the server.
 	HomeDir string
-	// BlockingStart if true makes the Start function blocking;
+	// BlockingStart determines if Start is blocking.
 	// It is non-blocking by default.
 	BlockingStart bool
 	// The server's configuration
 	Config *ServerConfig
-	// Metrics are the metrics that the server tracks
-	Metrics cametrics.Metrics
-	// Operations is responsible for the server's operation information
+	// Metrics are the metrics that the server tracks for API calls.
+	Metrics servermetrics.Metrics
+	// Operations is responsible for the server's operation information.
 	Operations operationsServer
-	// The server mux
+	// CA is the default certificate authority for the server.
+	CA
+	// metrics for database requests
+	dbMetrics *db.Metrics
+	// mux is used to server API requests
 	mux *gmux.Router
-	// The current listener for this server
+	// listener for this server
 	listener net.Listener
 	// An error which occurs when serving
 	serveError error
-	// Server's default CA
-	CA
-	// A map of CAs stored by CA name as key
+	// caMap is a list of CAs by name
 	caMap map[string]*CA
-	// A map of CA configs stored by CA file as key
+	// caConfigMap is a list CA configs by filename
 	caConfigMap map[string]*CAConfig
-	// channel for communication between http.serve and main threads.
-	wait chan bool
-	// Server mutex
-	mutex sync.Mutex
-	// The server's current levels
+	// levels currently supported by the server
 	levels *dbutil.Levels
+	wait   chan bool
+	mutex  sync.Mutex
 }
 
 // Init initializes a fabric-ca server
@@ -108,6 +110,7 @@ func (s *Server) Init(renew bool) (err error) {
 func (s *Server) init(renew bool) (err error) {
 	s.Config.Operations.Metrics = s.Config.Metrics
 	s.Operations = operations.NewSystem(s.Config.Operations)
+	s.initMetrics()
 
 	serverVersion := metadata.GetVersion()
 	err = calog.SetLogLevel(s.Config.LogLevel, s.Config.Debug)
@@ -137,9 +140,14 @@ func (s *Server) init(renew bool) (err error) {
 }
 
 func (s *Server) initMetrics() {
-	metricsProvider := s.Operations
-	s.Metrics.APICounter = metricsProvider.NewCounter(cametrics.APICounterOpts)
-	s.Metrics.APIDuration = metricsProvider.NewHistogram(cametrics.APIDurationOpts)
+	s.Metrics = servermetrics.Metrics{
+		APICounter:  s.Operations.NewCounter(servermetrics.APICounterOpts),
+		APIDuration: s.Operations.NewHistogram(servermetrics.APIDurationOpts),
+	}
+	s.dbMetrics = &db.Metrics{
+		APICounter:  s.Operations.NewCounter(db.APICounterOpts),
+		APIDuration: s.Operations.NewHistogram(db.APIDurationOpts),
+	}
 }
 
 func (s *Server) startOperationsServer() error {
@@ -186,7 +194,6 @@ func (s *Server) Start() (err error) {
 	if err != nil {
 		return nil
 	}
-	s.initMetrics()
 
 	// Start listening and serving
 	err = s.listenAndServe()
@@ -530,7 +537,7 @@ func (s *Server) GetCA(name string) (*CA, error) {
 
 // Register all endpoint handlers
 func (s *Server) registerHandlers() {
-	s.mux.Use(s.middleware)
+	s.mux.Use(s.cors, s.middleware)
 	s.registerHandler(newCAInfoEndpoint(s))
 	s.registerHandler(newRegisterEndpoint(s))
 	s.registerHandler(newEnrollEndpoint(s))
@@ -560,6 +567,13 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		caName := s.getCAName()
 		s.recordMetrics(metrics.Duration, caName, apiName, strconv.Itoa(metrics.Code))
 	})
+}
+
+func (s *Server) cors(next http.Handler) http.Handler {
+	if s.Config.CORS.Enabled {
+		return ghandlers.CORS(ghandlers.AllowedOrigins(s.Config.CORS.Origins))(next)
+	}
+	return next
 }
 
 func (s *Server) getAPIName(r *http.Request) string {
@@ -700,6 +714,7 @@ func (s *Server) serve() error {
 	}
 
 	s.serveError = http.Serve(listener, s.mux)
+
 	log.Errorf("Server has stopped serving: %s", s.serveError)
 	s.closeListener()
 	err := s.closeDB()
