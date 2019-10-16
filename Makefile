@@ -29,9 +29,9 @@
 #   - clean-all - cleans the build area and release packages
 
 PROJECT_NAME = fabric-ca
-BASE_VERSION = 1.4.2
-PREV_VERSION = 1.4.1
-IS_RELEASE = true
+BASE_VERSION = 1.4.4
+PREV_VERSION = 1.4.3
+IS_RELEASE = false
 
 ARCH=$(shell go env GOARCH)
 MARCH=$(shell go env GOOS)-$(shell go env GOARCH)
@@ -47,12 +47,12 @@ FABRIC_TAG ?= $(ARCH)-$(BASE_VERSION)
 endif
 
 ifeq ($(ARCH),s390x)
-PGVER=9.6
+PGVER=10
 else
-PGVER=9.5
+PGVER=10
 endif
 
-BASEIMAGE_RELEASE = 0.4.15
+BASEIMAGE_RELEASE = 0.4.16
 PKGNAME = github.com/hyperledger/$(PROJECT_NAME)
 
 METADATA_VAR = Version=$(PROJECT_VERSION)
